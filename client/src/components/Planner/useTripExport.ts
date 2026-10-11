@@ -9,8 +9,8 @@ import { hasPersonalPlan } from '../PDF/pdfScope';
 
 type Translate = (key: string, params?: Record<string, string | number>) => string;
 
-/** A running export: a PDF of the plan or of my plan, the calendar file, or a GPX scope. */
-export type ExportJob = 'pdf' | 'pdf:mine' | 'ics' | `gpx:${string}`;
+/** A running export: a PDF of the plan, of my plan, or of one day, the calendar file, or a GPX scope. */
+export type ExportJob = 'pdf' | 'pdf:mine' | `pdf:day:${number}` | 'ics' | `gpx:${string}`;
 
 /** What a trip export prints, as both shells hold it. */
 export interface TripExportData {
@@ -108,8 +108,8 @@ export function useTripExport({
       return next;
     });
 
-  const exportPdf = async (mine = false) => {
-    const job: ExportJob = mine ? 'pdf:mine' : 'pdf';
+  const exportPdf = async (scope: { mine?: boolean; dayId?: number } = {}) => {
+    const job: ExportJob = scope.mine ? 'pdf:mine' : scope.dayId != null ? `pdf:day:${scope.dayId}` : 'pdf';
     if ((requireTrip && !data.trip) || running[laneOf(job)]) return;
     begin(job);
     const flatNotes = flatDayNotes(data.dayNotes);
@@ -131,7 +131,8 @@ export function useTripExport({
         timeFormat,
         distanceUnit,
         showServiceStops,
-        onlyUserId: mine ? myId : undefined,
+        onlyUserId: scope.mine ? myId : undefined,
+        dayId: scope.dayId,
       });
       if (closeAfterPdf) onExported();
     } catch (e) {

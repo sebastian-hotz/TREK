@@ -75,7 +75,7 @@ export default function MExportSheet({ planner, shell }: MTripSheetsProps) {
               icon={UserRound}
               title={isRunning('pdf:mine') ? t('common.loading') : t('dayplan.pdfMine')}
               sub={t('dayplan.pdfMineSub')}
-              onClick={() => void exportPdf(true)}
+              onClick={() => void exportPdf({ mine: true })}
             />
           )}
           <ExportRow

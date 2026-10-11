@@ -635,6 +635,55 @@ describe('downloadTripPDF', () => {
     await expect(downloadTripPDF(minimalArgs)).resolves.not.toThrow()
     expect(getIframe()!.srcdoc).not.toContain('class="plugin-sections')
   })
+
+  it('FE-COMP-TRIPPDF-024: a single-day export prints only that day, with no cover', async () => {
+    const other = { id: 11, day_number: 2, title: 'Florence Day', date: '2025-06-02' } as any
+    const colosseum = { ...placeWithDetails }
+    const uffizi = { ...placeWithDetails, id: 101, name: 'Uffizi' } as any
+    await downloadTripPDF({
+      ...richArgs,
+      days: [dayWithPlaces, other],
+      places: [colosseum, uffizi],
+      assignments: {
+        '10': [assignmentForDay],
+        '11': [{ ...assignmentForDay, id: 201, day_id: 11, place_id: 101, place: uffizi }],
+      } as any,
+      dayId: 10,
+    })
+    const srcdoc = getIframe()!.srcdoc
+    expect(srcdoc).toContain('Rome Day')
+    expect(srcdoc).toContain('Colosseum')
+    expect(srcdoc).not.toContain('Florence Day')
+    expect(srcdoc).not.toContain('Uffizi')
+    // The page is a day's handout: the full-sheet cover gives way.
+    expect(srcdoc).not.toContain('class="cover"')
+  })
+
+  it('FE-COMP-TRIPPDF-025: a whole-trip export keeps the cover and every day', async () => {
+    const other = { id: 11, day_number: 2, title: 'Florence Day', date: '2025-06-02' } as any
+    const uffizi = { ...placeWithDetails, id: 101, name: 'Uffizi' } as any
+    await downloadTripPDF({
+      ...richArgs,
+      days: [dayWithPlaces, other],
+      places: [placeWithDetails, uffizi],
+      assignments: {
+        '10': [assignmentForDay],
+        '11': [{ ...assignmentForDay, id: 201, day_id: 11, place_id: 101, place: uffizi }],
+      } as any,
+    })
+    const srcdoc = getIframe()!.srcdoc
+    expect(srcdoc).toContain('class="cover"')
+    expect(srcdoc).toContain('Rome Day')
+    expect(srcdoc).toContain('Florence Day')
+  })
+
+  it('FE-COMP-TRIPPDF-026: an unknown day prints an empty document, not the whole trip', async () => {
+    await downloadTripPDF({ ...richArgs, dayId: 999 })
+    const srcdoc = getIframe()!.srcdoc
+    expect(srcdoc).not.toContain('Rome Day')
+    expect(srcdoc).not.toContain('Colosseum')
+    expect(srcdoc).not.toContain('class="cover"')
+  })
 })
 
 // FE-W5PDF-001 to FE-W5PDF-030 — multi-day transport spans, the remaining

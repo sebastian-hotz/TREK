@@ -57,6 +57,9 @@ export function TripExportModal({
 }: TripExportModalProps) {
   const [subscribeOpen, setSubscribeOpen] = useState(false)
   const titleId = useId()
+  // The day a single-day PDF prints. Defaults to the first, like the plan's own
+  // list; an unknown id prints an empty document rather than the whole trip.
+  const [dayJobId, setDayJobId] = useState<number>(days[0]?.id ?? 0)
   const {
     fileBase, offerMine, isRunning, anyRunning, exportPdf, downloadIcs, downloadGpx,
   } = useTripExport({
@@ -106,7 +109,18 @@ export function TripExportModal({
                 sub={t('dayplan.pdfMineSub')}
                 busy={isRunning('pdf:mine')}
                 disabled={anyRunning}
-                onClick={() => exportPdf(true)}
+                onClick={() => exportPdf({ mine: true })}
+              />
+            )}
+            {days.length > 0 && (
+              <ExportDayRow
+                t={t}
+                days={days}
+                dayId={dayJobId}
+                onDayChange={setDayJobId}
+                busy={isRunning(`pdf:day:${dayJobId}`)}
+                disabled={anyRunning}
+                onExport={() => exportPdf({ dayId: dayJobId })}
               />
             )}
           </div>
@@ -191,5 +205,58 @@ function ExportRow({ icon: Icon, title, sub, busy = false, disabled = false, onC
       </span>
       <ChevronRight size={15} strokeWidth={2} className="flex-none text-content-faint transition-transform group-enabled:group-hover:translate-x-0.5" />
     </button>
+  )
+}
+
+/**
+ * The plan of one day as a PDF: the same card as every other export, with the
+ * day chosen in place of the subtitle — a select on the row it belongs to, so
+ * picking a day and starting the export are one motion.
+ */
+function ExportDayRow({ t, days, dayId, onDayChange, busy = false, disabled = false, onExport }: {
+  t: (key: string, params?: Record<string, string | number>) => string
+  days: Day[]
+  dayId: number
+  onDayChange: (dayId: number) => void
+  busy?: boolean
+  disabled?: boolean
+  onExport: () => void
+}) {
+  const label = (d: Day) => {
+    const title = d.title ? ` · ${d.title}` : ''
+    return `${t('dayplan.dayN', { n: d.day_number })}${d.date ? ` · ${d.date}` : ''}${title}`
+  }
+  return (
+    <div
+      className="group flex w-full items-center gap-3 rounded-[14px] border border-edge-faint bg-surface-card px-3 py-2.5 transition-colors hover:bg-surface-hover"
+      aria-busy={busy}
+      data-disabled={disabled || undefined}
+    >
+      <span className="grid h-9 w-9 flex-none place-items-center rounded-[10px] bg-surface-tertiary text-content-secondary transition-colors group-hover:bg-surface-card group-hover:text-content">
+        {busy ? <Loader2 size={16} strokeWidth={2} className="animate-spin" /> : <FileText size={16} strokeWidth={1.9} />}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate font-semibold text-content" style={fs(13.5, 'body')}>{t('dayplan.pdfDay')}</span>
+        <select
+          aria-label={t('dayplan.pdfDay')}
+          value={dayId}
+          onChange={e => onDayChange(Number(e.target.value))}
+          disabled={disabled}
+          className="mt-0.5 block w-full max-w-full truncate rounded-md border border-edge-faint bg-surface px-1.5 py-0.5 text-content-muted outline-none"
+          style={fs(11.5)}
+        >
+          {days.map(d => <option key={d.id} value={d.id}>{label(d)}</option>)}
+        </select>
+      </span>
+      <button
+        type="button"
+        onClick={onExport}
+        disabled={disabled || busy}
+        aria-label={t('dayplan.pdfDayExport')}
+        className="flex-none rounded-md p-1.5 text-content-faint transition-colors enabled:hover:text-content disabled:opacity-50"
+      >
+        <Download size={15} strokeWidth={2} />
+      </button>
+    </div>
   )
 }

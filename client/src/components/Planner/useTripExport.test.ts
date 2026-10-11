@@ -1,4 +1,4 @@
-// FE-PLANNER-TRIPEXPORT-001 to -010: the trip exports behind the desktop export
+// FE-PLANNER-TRIPEXPORT-001 to -012: the trip exports behind the desktop export
 // dialog and the phone's export sheet.
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
@@ -128,8 +128,35 @@ describe('useTripExport', () => {
       })
     );
     expect(opts.onExported).toHaveBeenCalledTimes(1);
-    await act(() => result.current.exportPdf(true));
+    await act(() => result.current.exportPdf({ mine: true }));
     expect(vi.mocked(downloadTripPDF).mock.calls[1][0]).toMatchObject({ onlyUserId: 9 });
+  });
+
+  it('FE-PLANNER-TRIPEXPORT-011: the PDF can print one day only, and the day job holds the pdf lane like any other', async () => {
+    const { result } = renderHook(() => useTripExport(options()));
+    await act(() => result.current.exportPdf({ dayId: 4 }));
+    expect(vi.mocked(downloadTripPDF).mock.calls[0][0]).toMatchObject({ dayId: 4, onlyUserId: undefined });
+    expect(result.current.anyRunning).toBe(false);
+  });
+
+  it('FE-PLANNER-TRIPEXPORT-012: while a day exports, no other PDF starts', async () => {
+    const pdf = deferred();
+    vi.mocked(downloadTripPDF).mockReturnValue(pdf.promise);
+    const { result } = renderHook(() => useTripExport(options()));
+    let running!: Promise<void>;
+    act(() => {
+      running = result.current.exportPdf({ dayId: 4 });
+    });
+    await vi.waitFor(() => expect(downloadTripPDF).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(downloadTripPDF).mock.calls[0][0]).toMatchObject({ dayId: 4 });
+    expect(result.current.isRunning('pdf:day:4')).toBe(true);
+    await act(() => result.current.exportPdf({ dayId: 5 }));
+    expect(downloadTripPDF).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      pdf.resolve();
+      await running;
+    });
+    expect(result.current.anyRunning).toBe(false);
   });
 
   it('FE-PLANNER-TRIPEXPORT-005: the phone stays open after the PDF and prints nothing without a trip', async () => {
@@ -193,7 +220,7 @@ describe('useTripExport', () => {
       running = result.current.exportPdf();
     });
     await vi.waitFor(() => expect(downloadTripPDF).toHaveBeenCalledTimes(1));
-    await act(() => result.current.exportPdf(true));
+    await act(() => result.current.exportPdf({ mine: true }));
     expect(downloadTripPDF).toHaveBeenCalledTimes(1);
     await act(() => result.current.downloadIcs());
     expect(fetchSpy).toHaveBeenCalledWith('/api/trips/3/export.ics', { credentials: 'include' });

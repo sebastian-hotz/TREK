@@ -1,4 +1,4 @@
-// FE-PLANNER-EXPORTMODAL-001 to FE-PLANNER-EXPORTMODAL-018
+// FE-PLANNER-EXPORTMODAL-001 to FE-PLANNER-EXPORTMODAL-020
 import { render, screen, waitFor } from '../../../tests/helpers/render'
 import userEvent from '@testing-library/user-event'
 import { downloadTripPDF } from '../PDF/TripPDF'
@@ -290,5 +290,31 @@ describe('TripExportModal', () => {
     await user.click(screen.getByText('dayplan.pdfMine'))
     await waitFor(() => expect(downloadTripPDF).toHaveBeenCalledTimes(1))
     expect(vi.mocked(downloadTripPDF).mock.calls[0][0]).toMatchObject({ onlyUserId: 7 })
+  })
+
+  it('FE-PLANNER-EXPORTMODAL-019: a single day exports as its own PDF', async () => {
+    const user = userEvent.setup()
+    const days = [
+      buildDay({ id: 10, day_number: 1 }),
+      buildDay({ id: 11, day_number: 2 }),
+    ]
+    render(<TripExportModal {...makeProps({ days })} />)
+
+    // The row lists every day and defaults to the first.
+    const select = screen.getByLabelText('dayplan.pdfDay')
+    expect(Array.from(select.querySelectorAll('option')).map(o => (o as HTMLOptionElement).value)).toEqual(['10', '11'])
+    expect((select as HTMLSelectElement).value).toBe('10')
+
+    // Pick the second day and export: the builder gets that day's id only.
+    await user.selectOptions(select, '11')
+    await user.click(screen.getByRole('button', { name: 'dayplan.pdfDayExport' }))
+    await waitFor(() => expect(downloadTripPDF).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(downloadTripPDF).mock.calls[0][0]).toMatchObject({ dayId: 11 })
+    expect(vi.mocked(downloadTripPDF).mock.calls[0][0]).not.toHaveProperty('onlyUserId')
+  })
+
+  it('FE-PLANNER-EXPORTMODAL-020: a trip with no days offers no day export', () => {
+    render(<TripExportModal {...makeProps()} />)
+    expect(screen.queryByLabelText('dayplan.pdfDay')).toBeNull()
   })
 })

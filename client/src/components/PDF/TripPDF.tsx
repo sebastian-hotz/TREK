@@ -215,6 +215,13 @@ interface downloadTripPDFProps {
   costsEnabled?: boolean
   /** Prints only this member's plan (#2168): the stops and bookings that name them, and the ones that name nobody. */
   onlyUserId?: number
+  /**
+   * Prints only this day. The plan, the route map and the totals narrow to it and the
+   * cover gives way, so the page reads as one day's handout rather than a trip with
+   * one day in it. Bookings keep seeing the whole day list — a span's arrival belongs
+   * to a day the export does not print, and the merge reads it to place what does.
+   */
+  dayId?: number
 }
 
 /**
@@ -235,11 +242,15 @@ function planAssignments(assignments: AssignmentsMap, showServiceStops: boolean)
 
 // `assignments` is normalised here once, to the plan's own list; every read below
 // (and fetchPlacePhotos) relies on it being an object.
-export async function downloadTripPDF({ trip, days, places, assignments: allStored = {}, categories, dayNotes, reservations: allReservations = [], t: _t, locale: _locale, timeFormat: _timeFormat, distanceUnit: _distanceUnit, showServiceStops = true, budgetItems, costsEnabled, onlyUserId }: downloadTripPDFProps) {
+export async function downloadTripPDF({ trip, days, places, assignments: allStored = {}, categories, dayNotes, reservations: allReservations = [], t: _t, locale: _locale, timeFormat: _timeFormat, distanceUnit: _distanceUnit, showServiceStops = true, budgetItems, costsEnabled, onlyUserId, dayId }: downloadTripPDFProps) {
   const { assignments: stored, reservations } = onlyUserId != null
     ? onlyMyPlan(allStored, allReservations, onlyUserId)
     : { assignments: allStored, reservations: allReservations }
-  const assignments = planAssignments(stored, showServiceStops)
+  // A single-day export keeps only that day's stops, so the photos fetched, the
+  // cover's planned count and the route map all follow the day the page prints.
+  const assignments = dayId != null
+    ? Object.fromEntries(Object.entries(planAssignments(stored, showServiceStops)).filter(([id]) => Number(id) === dayId))
+    : planAssignments(stored, showServiceStops)
   const breaksPerDay = pdfSwitchOn(PAGE_BREAK_KEY)
   const showTransportNotes = pdfSwitchOn(TRANSPORT_NOTES_KEY)
   // Set while the days render: the switch only shows when there is a note to hide.
@@ -251,7 +262,12 @@ export async function downloadTripPDF({ trip, days, places, assignments: allStor
   const is12h = (_timeFormat || useSettingsStore.getState().settings.time_format || '24h') === '12h'
   const fmtTime = (v?: string | null) => formatClockTime(v, is12h)
   const sorted = [...(days || [])].sort((a, b) => a.day_number - b.day_number)
-  const range = longDateRange(sorted, loc)
+  // The days the document prints. A single-day export narrows them to the one asked
+  // for; `sorted` stays whole below where a span needs its neighbours. An unknown
+  // day prints an empty document rather than the whole trip — a wrong id is a bug
+  // to show, not one to quietly paper over with days nobody asked for.
+  const exportDays = dayId != null ? sorted.filter(d => d.id === dayId) : sorted
+  const range = longDateRange(exportDays, loc)
   const coverImg = safeImg(trip?.cover_image)
   //retrieve accommodations for the trip to display on the day sections and prefetch their photos if needed
   const accommodations = await accommodationsApi.list(trip.id);
@@ -278,7 +294,7 @@ export async function downloadTripPDF({ trip, days, places, assignments: allStor
   try {
     tripRoute = await routeTrip(
       {
-        days: sorted,
+        days: exportDays,
         assignments,
         reservations,
         accommodations: accommodationList,
@@ -309,7 +325,7 @@ export async function downloadTripPDF({ trip, days, places, assignments: allStor
   // planned yet is meant to print without a map.
   if (tripRoute && !tripMapSvg && Object.values(assignments).some(list => list?.length)) {
     console.warn(
-      `[tripPdfMap] no map drawn: ${tripRoute.days.length} of ${sorted.length} day(s) produced a route.`
+      `[tripPdfMap] no map drawn: ${tripRoute.days.length} of ${exportDays.length} day(s) produced a route.`
       + ' A day needs two located stops, or one located stop with an accommodation either side of it.',
     )
   }
@@ -391,7 +407,7 @@ export async function downloadTripPDF({ trip, days, places, assignments: allStor
     return tr(`reservations.span.${phase === 'start' ? 'start' : phase === 'end' ? 'end' : 'ongoing'}`)
   }
   // Build day HTML
-  const daysHtml = sorted.map((day, di) => {
+  const daysHtml = exportDays.map((day, di) => {
     // What the plan lists (planAssignments): the stop a booked night wrote sat at the
     // head of its day, so the hotel printed above a morning flight (#2434).
     const assigned = (assignments[String(day.id)] || [])
@@ -683,6 +699,49 @@ export async function downloadTripPDF({ trip, days, places, assignments: allStor
       </div>`).join('')}
     </div>`
 
+  // A single-day export prints no cover: the page is one day's handout, and a
+  // full-sheet trip title with the whole trip's figures would read as the trip
+  // with days missing. The map and the day section carry the day on their own.
+  const coverHtml = dayId == null ? `
+<div class="cover">
+  ${coverImg ? `<div class="cover-bg" style="background-image:url('${escHtml(cssUrl(coverImg))}')"></div>` : ''}
+  <div class="cover-dim"></div>
+  <div class="cover-brand"><img src="${absUrl('/logo-light.svg')}" style="height:28px;opacity:0.5;" /></div>
+  <div class="cover-body">
+    ${coverImg
+      ? `<div class="cover-circle"><img src="${escHtml(coverImg)}" /></div>`
+      : `<div class="cover-circle-ph"></div>`}
+    <div class="cover-label">${escHtml(tr('pdf.travelPlan'))}</div>
+    <div class="cover-title">${escHtml(trip?.title || 'My Trip')}</div>
+    ${trip?.description ? `<div class="cover-desc">${escHtml(trip.description)}</div>` : ''}
+    ${range ? `<div class="cover-dates">${range}</div>` : ''}
+    <div class="cover-line"></div>
+    <div class="cover-stats">
+      <div>
+        <div class="cover-stat-num">${sorted.length}</div>
+        <div class="cover-stat-lbl">${escHtml(tr('dashboard.days', { count: sorted.length }))}</div>
+      </div>
+      <div>
+        <div class="cover-stat-num">${places?.length || 0}</div>
+        <div class="cover-stat-lbl">${escHtml(tr('dashboard.places', { count: places?.length || 0 }))}</div>
+      </div>
+      <div>
+        <div class="cover-stat-num">${totalAssigned}</div>
+        <div class="cover-stat-lbl">${escHtml(tr('pdf.planned'))}</div>
+      </div>
+      ${totalDistanceLabel ? `<div>
+        <div class="cover-stat-num">${escHtml(totalDistanceLabel)}</div>
+        <div class="cover-stat-lbl">${escHtml(tr('pdf.distanceLabel'))}</div>
+      </div>` : ''}
+      ${totalCostLabel ? `<div>
+        <div class="cover-stat-num">${totalCostLabel}</div>
+        <div class="cover-stat-lbl">${escHtml(tr('pdf.costLabel'))}</div>
+      </div>` : ''}
+    </div>
+  </div>
+</div>
+` : ''
+
   const html = `<!DOCTYPE html>
 <html lang="${(loc || 'en').split('-')[0]}">
 <head>
@@ -898,44 +957,7 @@ export async function downloadTripPDF({ trip, days, places, assignments: allStor
   <img src="${absUrl('/logo-dark.svg')}" style="height:10px;opacity:0.6;" />
 </div>
 
-<!-- Cover -->
-<div class="cover">
-  ${coverImg ? `<div class="cover-bg" style="background-image:url('${escHtml(cssUrl(coverImg))}')"></div>` : ''}
-  <div class="cover-dim"></div>
-  <div class="cover-brand"><img src="${absUrl('/logo-light.svg')}" style="height:28px;opacity:0.5;" /></div>
-  <div class="cover-body">
-    ${coverImg
-      ? `<div class="cover-circle"><img src="${escHtml(coverImg)}" /></div>`
-      : `<div class="cover-circle-ph"></div>`}
-    <div class="cover-label">${escHtml(tr('pdf.travelPlan'))}</div>
-    <div class="cover-title">${escHtml(trip?.title || 'My Trip')}</div>
-    ${trip?.description ? `<div class="cover-desc">${escHtml(trip.description)}</div>` : ''}
-    ${range ? `<div class="cover-dates">${range}</div>` : ''}
-    <div class="cover-line"></div>
-    <div class="cover-stats">
-      <div>
-        <div class="cover-stat-num">${sorted.length}</div>
-        <div class="cover-stat-lbl">${escHtml(tr('dashboard.days', { count: sorted.length }))}</div>
-      </div>
-      <div>
-        <div class="cover-stat-num">${places?.length || 0}</div>
-        <div class="cover-stat-lbl">${escHtml(tr('dashboard.places', { count: places?.length || 0 }))}</div>
-      </div>
-      <div>
-        <div class="cover-stat-num">${totalAssigned}</div>
-        <div class="cover-stat-lbl">${escHtml(tr('pdf.planned'))}</div>
-      </div>
-      ${totalDistanceLabel ? `<div>
-        <div class="cover-stat-num">${escHtml(totalDistanceLabel)}</div>
-        <div class="cover-stat-lbl">${escHtml(tr('pdf.distanceLabel'))}</div>
-      </div>` : ''}
-      ${totalCostLabel ? `<div>
-        <div class="cover-stat-num">${totalCostLabel}</div>
-        <div class="cover-stat-lbl">${escHtml(tr('pdf.costLabel'))}</div>
-      </div>` : ''}
-    </div>
-  </div>
-</div>
+${coverHtml}
 
 <!-- Trip map -->
 ${hasInvalidTour ? `<p role="status" style="color:#b45309">${escHtml(tr('tours.dayRoute.endpointUnknown'))}</p>` : ''}
